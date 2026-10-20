@@ -32,7 +32,8 @@ import { streamPerfCount } from '@/stores/utils/streamDebug';
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
 import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
 import { useDeviceInfo, useTabletStandalonePwaRuntime } from '@/lib/device';
-import { cn } from '@/lib/utils';
+import { cn, formatDirectoryName } from '@/lib/utils';
+import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { useKeybinds } from '@/hooks/useKeybind';
 import {
 } from '@/lib/quota/model-families';
@@ -128,19 +129,8 @@ export const Header: React.FC = () => {
     const project = state.projects.find((candidate) => candidate.id === state.activeProjectId);
     return project ? { id: project.id, path: project.path, label: project.label } : null;
   }));
-  const activeProjectLabel = React.useMemo(() => {
-    if (!activeProject) {
-      return null;
-    }
-
-    const trimmedLabel = activeProject.label?.trim();
-    if (trimmedLabel) {
-      return trimmedLabel;
-    }
-
-    const pathSegments = activeProject.path.split(/[\\/]/).filter(Boolean);
-    return pathSegments[pathSegments.length - 1] ?? null;
-  }, [activeProject]);
+  const projects = useProjectsStore((state) => state.projects);
+  const worktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
   const loadQuotaSettings = useQuotaStore((state) => state.loadSettings);
 
   const { isMobile } = useDeviceInfo();
@@ -362,6 +352,32 @@ export const Header: React.FC = () => {
   const openDirectory = React.useMemo(() => {
     return worktreeDirectory || sessionDirectory || (panelContentDirectory(draftSpace, draftDirectory) ?? '');
   }, [draftDirectory, draftSpace, sessionDirectory, worktreeDirectory]);
+
+  // The project row names the session the title names: the project the open
+  // directory (the session's own directory, worktree or draft directory)
+  // belongs to, or that directory's own name when it is no registered project
+  // or managed worktree. The store's activeProjectId is the whole-app active
+  // project and can belong to a different directory than the session it labels —
+  // right after a data directory change that happens routinely — so it only
+  // serves as the label when there is no directory at all.
+  const activeProjectLabel = React.useMemo(() => {
+    const candidate = openDirectory
+      ? resolveProjectForSessionDirectory(projects, worktreesByProject, openDirectory)
+      : activeProject;
+    if (candidate) {
+      const trimmedLabel = candidate.label?.trim();
+      if (trimmedLabel) {
+        return trimmedLabel;
+      }
+      const pathSegments = candidate.path.split(/[\\/]/).filter(Boolean);
+      return pathSegments[pathSegments.length - 1] ?? null;
+    }
+    if (!openDirectory) {
+      return null;
+    }
+    const trimmedName = formatDirectoryName(openDirectory).trim();
+    return trimmedName === '/' ? null : trimmedName;
+  }, [activeProject, openDirectory, projects, worktreesByProject]);
 
   const catalogWorktreeBranch = useSessionUIStore((state) => {
     const candidateDirectory = normalize(worktreeDirectory || sessionDirectory || '');
